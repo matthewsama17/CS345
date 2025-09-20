@@ -1,0 +1,21 @@
+It appears that syscall() was called by usertrap()
+
+p->trapframe->a7 has a value of 7, which represents SYS_exec. I think this is
+the name of the system call that lead to the process being interrupted.
+
+The CPU was previously in user mode.
+
+sepc=0x80001c82
+Kernel panics at the following instruction:
+lw a3,0
+The variable num must correspond to the register a3
+
+The kernel crashes because address 0 is not a mapped to anything. It is not a
+valid address that can be dereferenced.
+
+scause=0xd represents Load page fault, which suggests that the kernel failed
+to load the page it wanted to load, which matches my explanation
+
+The process running when the kernel panicked had the name
+"initcode\000\000\000\000\000\000\000"
+and had pid=1
