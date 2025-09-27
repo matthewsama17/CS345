@@ -165,6 +165,9 @@ panic(char *s)
   pr.locking = 0;
   printf("panic: ");
   printf("%s\n", s);
+
+  backtrace();
+
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -175,4 +178,45 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+printpaddedhex(long long x, unsigned char min_width)
+{
+  unsigned char x_width = 0;
+  long temp = x;
+  while(temp != 0)
+  {
+    temp >>= 4;
+    x_width += 1;
+  }
+
+  while(x_width < min_width)
+  {
+    printf("0");
+    x_width += 1;
+  }
+
+  if(x != 0)
+  {
+    printf("%llx", x);
+  }
+}
+
+void
+backtrace()
+{
+  printf("backtrace:\n");
+
+  unsigned long *fp = (unsigned long *) r_fp();
+  unsigned long page = (unsigned long) PGROUNDDOWN((long) fp);
+
+  while(((unsigned long) PGROUNDDOWN((long) fp)) == page)
+  {
+    printf("0x");
+    printpaddedhex((long long) *(fp-1), 16);
+    printf("\n");
+
+    fp = (unsigned long *) *(fp-2);
+  }
 }

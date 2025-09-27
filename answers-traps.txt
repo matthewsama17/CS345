@@ -1,0 +1,21 @@
+The a registers contain arguments to functions. The 13 in main's call to
+printf is stored in a2.
+
+The compiler has optimized out the call to f in main. instead of calling
+f(8) and then adding 1, it just skips all that and has a 12 hardcoded into
+the assembly code. In a similar way, f() never actually calls g(), it just
+adds 3 itself.
+
+The function printf is at address 6bc.
+
+After the jal to printf, it would be 34, which is the return address.
+
+The output of the code is "He110 World"
+
+If RISC-V were big-endian, you would need to set i = 0x726c6400. The 57616
+would not need to be replaced, because it is still equal to 0xe110.
+
+I thought that it would print an error when run, but it actually ran just
+fine. It printed long and seemingly random numbers. I suppose the assembly
+code just used whatever happened to be in the register for the third
+function argument.
