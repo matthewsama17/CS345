@@ -51,3 +51,8 @@ This is the trapframe page.
 
 The last pte has has permissions 0x4B, or 0100 1011 in binary.  R-X-
 This is the trampoline page.
+
+
+I do not see a way that the new shared page could make any system calls
+other than getpid faster. All of the other system calls do more than
+return information about the process that called it.
