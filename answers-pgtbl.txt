@@ -1,0 +1,53 @@
+va 0x0 pte 0x21FC885B pa 0x87F22000 perm 0x5B
+va 0x1000 pte 0x21FC7C1B pa 0x87F1F000 perm 0x1B
+va 0x2000 pte 0x21FC7817 pa 0x87F1E000 perm 0x17
+va 0x3000 pte 0x21FC7407 pa 0x87F1D000 perm 0x7
+va 0x4000 pte 0x21FC70D7 pa 0x87F1C000 perm 0xD7
+va 0x5000 pte 0x0 pa 0x0 perm 0x0
+va 0x6000 pte 0x0 pa 0x0 perm 0x0
+va 0x7000 pte 0x0 pa 0x0 perm 0x0
+va 0x8000 pte 0x0 pa 0x0 perm 0x0
+va 0x9000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFF6000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFF7000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFF8000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFF9000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFFA000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFFB000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFFC000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFFD000 pte 0x0 pa 0x0 perm 0x0
+va 0xFFFFE000 pte 0x21FD08C7 pa 0x87F42000 perm 0xC7
+va 0xFFFFF000 pte 0x2000184B pa 0x80006000 perm 0x4B
+
+These are the page-table entries printed out by pgtbltest.
+First, the virual address (va) is printed on the left end.
+Then, the page table entry (pte) associated with that va is printed.
+Following that are the physical address (pa) and permissions (perm),
+which are extracted from the pte. The pa is the physical address
+of the beginning of the page that the pte points to.
+
+The first pte has permissions of 0x5B, or 0101 1011 in binary.  R-XU
+This page contains the program code.
+
+The second pte has permissions of 0x1B, or 0001 1011 in binary. R-XU
+This page contains program data.
+
+The third pte has permissions of 0x17, or 0001 0111 in binary.  RW-U
+This is the Heap.
+
+The fourth pte has permissions of 0x7, or 0000 0111 in binary.  RW--
+This page cannot be used by the user. If the stack grows larger than a
+page, then it will overflow into this page and the program will crash.
+
+The fifth pte has permissions of 0xD7, or 1101 0111 in binary.  RW-U
+This is the Stack.
+
+All of the ptes in the middle have 0x0 permissions.
+These pages are not valid, they cannot be used by anyone for
+anything, and attempting to access them will cause a page fault.
+
+The second to last pte has permissions 0xC7, or 1100 0111 in binary. RW--
+This is the trapframe page.
+
+The last pte has has permissions 0x4B, or 0100 1011 in binary.  R-X-
+This is the trampoline page.
