@@ -490,7 +490,47 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 #ifdef LAB_PGTBL
 void
 vmprint(pagetable_t pagetable) {
-  // your code here
+  printf("page table %p\n", (void *) pagetable);
+
+  for(int i = 0; i < 512; i++){
+    pte_t top_pte = pagetable[i];
+    if(top_pte & PTE_V){
+      pte_t va = ((pte_t) i) << 30;
+      printf(" ..%p: pte %p pa %p\n",
+             (void *) va,
+             (void *) top_pte,
+             (void *) PTE2PA(top_pte)
+            );
+
+      pagetable_t mid_table = (pagetable_t) PTE2PA(top_pte);
+      for(int j = 0; j < 512; j++){
+        pte_t mid_pte = mid_table[j];
+        if(mid_pte & PTE_V){
+          va += ((pte_t) j) << 21;
+          printf(" .. ..%p: pte %p pa %p\n",
+                 (void *) va,
+                 (void *) top_pte,
+                 (void *) PTE2PA(top_pte)
+                );
+
+          pagetable_t btm_table = (pagetable_t) PTE2PA(mid_pte);
+          for(int k = 0; k < 512; k++){
+            pte_t btm_pte = btm_table[k];
+            if(btm_pte & PTE_V){
+              va += ((pte_t) k) << 12;
+              printf(" .. .. ..%p: pte %p pa %p\n",
+                     (void *) va,
+                     (void *) top_pte,
+                     (void *) PTE2PA(top_pte)
+                    );
+
+            }
+          }
+        }
+      }
+    }
+  }
+
 }
 #endif
 

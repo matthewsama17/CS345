@@ -56,3 +56,26 @@ This is the trampoline page.
 I do not see a way that the new shared page could make any system calls
 other than getpid faster. All of the other system calls do more than
 return information about the process that called it.
+
+page table 0x0000000087f22000
+ ..0x0000000000000000: pte 0x0000000021fc7801 pa 0x0000000087f1e000
+ .. ..0x0000000000000000: pte 0x0000000021fc7401 pa 0x0000000087f1d000
+ .. .. ..0x0000000000000000: pte 0x0000000021fc7c5b pa 0x0000000087f1f000
+ .. .. ..0x0000000000001000: pte 0x0000000021fc70d7 pa 0x0000000087f1c000
+ .. .. ..0x0000000000002000: pte 0x0000000021fc6c07 pa 0x0000000087f1b000
+ .. .. ..0x0000000000003000: pte 0x0000000021fc68d7 pa 0x0000000087f1a000
+ ..0xffffffffc0000000: pte 0x0000000021fc8401 pa 0x0000000087f21000
+ .. ..0xffffffffffe00000: pte 0x0000000021fc8001 pa 0x0000000087f20000
+ .. .. ..0xffffffffffffd000: pte 0x0000000021fd4c13 pa 0x0000000087f53000
+ .. .. ..0xffffffffffffe000: pte 0x0000000021fd00c7 pa 0x0000000087f40000
+ .. .. ..0xfffffffffffff000: pte 0x000000002000184b pa 0x0000000080006000
+
+This is the print_kpgtbl() output from the lab writeup.
+
+The first leaf page is for the program code.
+The second leaf page is for the Heap.
+The third leaf page is for the Stack Overflow page.
+The fourth leaf page is for the Stack.
+The third to last leaf page is for the ugetpid() Syscall speed up I implemented.
+The second to last leaf page is for the trapframe page.
+The last leaf page is for the trampoline page.
