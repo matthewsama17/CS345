@@ -132,8 +132,11 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  if((*pte & PTE_V) == 0){
+    if(allocpage(pagetable, va, 0) < 0)
+      return 0;
+    pte = walk(pagetable, va, 0);
+  }
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -151,16 +154,14 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
-// Create PTEs for virtual addresses starting at va that refer to
-// physical addresses starting at pa.
-// va and size MUST be page-aligned.
-// Returns 0 on success, -1 if walk() couldn't
-// allocate a needed page-table page.
 int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+mapinvalidpages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
+
+  if(pa == PHYSTOP)
+    panic("PHYSTOP1");
 
   if((va % PGSIZE) != 0)
     panic("mappages: va not aligned");
@@ -178,12 +179,73 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if(*pte & PTE_V)
       panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
+    if(pa == PHYSTOP)
+      panic("PHYSTOP2");
+    *pte = PA2PTE(pa) | perm;
     if(a == last)
       break;
     a += PGSIZE;
     pa += PGSIZE;
   }
+  return 0;
+}
+
+// Create PTEs for virtual addresses starting at va that refer to
+// physical addresses starting at pa.
+// va and size MUST be page-aligned.
+// Returns 0 on success, -1 if walk() couldn't
+// allocate a needed page-table page.
+int
+mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  return mapinvalidpages(pagetable, va, size, pa, perm | PTE_V);
+}
+
+// Demand Paging. Allocates a page for an invalid pte.
+// returns 0 if successful, -1 if unsuccessful.
+int
+allocpage(pagetable_t pagetable, uint64 va, int scause)
+{
+  pte_t *pte;
+  void *pa;
+
+  if(va >= MAXVA){
+    printf("allocpage: va is too large.\n");
+    return -1;
+  }
+
+  pte = walk(pagetable, PGROUNDDOWN(va), 0);
+  if(pte == 0){
+    printf("allocpage: pte does not exist.\n");
+    return -1;
+  }
+
+  if(PTE2PA(*pte) < PHYSTOP){
+    printf("allocpage: pte is less than PHYSTOP.\n");
+    return -1;
+  }
+
+//  if((*pte & PTE_U) == 0){
+//   printf("allocpage: va is not valid for user use.\n");
+//   return -1;
+//  }
+
+  pa = kalloc();
+  if(pa == 0)
+    return -1;
+
+  if(scause == 12 && !(*pte & PTE_X))
+    return -1;
+
+  if(scause == 15 && !(*pte & PTE_W))
+    return -1;
+
+  memset(pa, 0, PGSIZE);
+
+  int perm = PTE_FLAGS(*pte) | PTE_V | PTE_R | PTE_W;
+
+  *pte = PA2PTE(pa) | perm;
+
   return 0;
 }
 
@@ -205,8 +267,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0) {
-      printf("va=%ld pte=%ld\n", a, *pte);
-      panic("uvmunmap: not mapped");
+      *pte = 0;
+      continue;
     }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
@@ -253,26 +315,17 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
-  char *mem;
   uint64 a;
-  int sz;
+  uint64 pa;
 
   if(newsz < oldsz)
     return oldsz;
 
   oldsz = PGROUNDUP(oldsz);
-  for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
-    if(mem == 0){
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
-    }
-#ifndef LAB_SYSCALL
-    memset(mem, 0, sz);
-#endif
-    if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-      kfree(mem);
+  for(a = oldsz; a < newsz; a += PGSIZE){
+    pa = PHYSTOP + PGSIZE + a;
+
+    if(mapinvalidpages(pagetable, a, PGSIZE, pa, PTE_R | PTE_U | (xperm & (~PTE_V))) != 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
@@ -348,8 +401,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     szinc = PGSIZE;
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+    if((*pte & PTE_V) == 0) {
+      if(allocpage(old, i, 0) < 0)
+        panic("uvmcopy: could not allocate page");
+      pte = walk(old, i, 0);
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
