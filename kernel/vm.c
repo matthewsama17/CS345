@@ -132,11 +132,8 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
-  if((*pte & PTE_V) == 0){
-    if(allocpage(pagetable, va, 0) < 0)
-      return 0;
-    pte = walk(pagetable, va, 0);
-  }
+  if((*pte & PTE_V) == 0)
+    return 0;
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -154,14 +151,22 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+// Create PTEs for virtual addresses starting at va that refer to
+// physical addresses starting at pa.
+// va and size MUST be page-aligned.
+// Returns 0 on success, -1 if walk() couldn't
+// allocate a needed page-table page.
+int
+mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  return mapinvalidpages(pagetable, va, size, pa, perm | PTE_V);
+}
+
 int
 mapinvalidpages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
-
-  if(pa == PHYSTOP)
-    panic("PHYSTOP1");
 
   if((va % PGSIZE) != 0)
     panic("mappages: va not aligned");
@@ -179,8 +184,6 @@ mapinvalidpages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int pe
       return -1;
     if(*pte & PTE_V)
       panic("mappages: remap");
-    if(pa == PHYSTOP)
-      panic("PHYSTOP2");
     *pte = PA2PTE(pa) | perm;
     if(a == last)
       break;
@@ -188,17 +191,6 @@ mapinvalidpages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int pe
     pa += PGSIZE;
   }
   return 0;
-}
-
-// Create PTEs for virtual addresses starting at va that refer to
-// physical addresses starting at pa.
-// va and size MUST be page-aligned.
-// Returns 0 on success, -1 if walk() couldn't
-// allocate a needed page-table page.
-int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
-{
-  return mapinvalidpages(pagetable, va, size, pa, perm | PTE_V);
 }
 
 // Demand Paging. Allocates a page for an invalid pte.
@@ -309,11 +301,38 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
   memmove(mem, src, sz);
 }
 
-
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+{
+  char *mem;
+  uint64 a;
+
+  if(newsz < oldsz)
+    return oldsz;
+
+  oldsz = PGROUNDUP(oldsz);
+  for(a = oldsz; a < newsz; a += PGSIZE){
+    mem = kalloc();
+    if(mem == 0){
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+    memset(mem, 0, PGSIZE);
+    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+      kfree(mem);
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+  }
+  return newsz;
+}
+
+// Allocate PTEs and physical memory to grow process from oldsz to
+// newsz, which need not be page aligned.  Returns new size or 0 on error.
+uint64
+uvmdemandalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
   uint64 a;
   uint64 pa;
@@ -325,7 +344,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
   for(a = oldsz; a < newsz; a += PGSIZE){
     pa = PHYSTOP + PGSIZE + a;
 
-    if(mapinvalidpages(pagetable, a, PGSIZE, pa, PTE_R | PTE_U | (xperm & (~PTE_V))) != 0){
+    if(mapinvalidpages(pagetable, a, PGSIZE, pa, PTE_R|PTE_U|xperm) != 0){
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
@@ -401,11 +420,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     szinc = PGSIZE;
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0) {
-      if(allocpage(old, i, 0) < 0)
-        panic("uvmcopy: could not allocate page");
-      pte = walk(old, i, 0);
-    }
+    if((*pte & PTE_V) == 0)
+      panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -586,7 +602,6 @@ vmprint(pagetable_t pagetable) {
       }
     }
   }
-
 }
 #endif
 
