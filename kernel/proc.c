@@ -58,8 +58,6 @@ procinit(void)
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
   }
-
-  u = kalloc();
 }
 
 // Must be called with interrupts disabled,
@@ -207,6 +205,14 @@ proc_pagetable(struct proc *p)
   }
 
   // map the usyscall page just below trapframe for ugetpid().
+  u = kalloc();
+  if(u == 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   u->pid = p->pid;
   if(mappages(pagetable, USYSCALL, PGSIZE,
               (uint64)(u), PTE_U | PTE_R) < 0){

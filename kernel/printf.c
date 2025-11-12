@@ -165,7 +165,6 @@ panic(char *s)
   pr.locking = 0;
   printf("panic: ");
   printf("%s\n", s);
-  vmprint(myproc()->pagetable);
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;

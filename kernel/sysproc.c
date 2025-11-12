@@ -93,7 +93,7 @@ sys_pgpte(void)
 int
 sys_kpgtbl(void)
 {
-  struct proc *p;  
+  struct proc *p;
 
   p = myproc();
   vmprint(p->pagetable);
