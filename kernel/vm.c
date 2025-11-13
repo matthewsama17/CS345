@@ -217,10 +217,10 @@ allocpage(pagetable_t pagetable, uint64 va, int scause)
     return -1;
   }
 
-//  if((*pte & PTE_U) == 0){
-//   printf("allocpage: va is not valid for user use.\n");
-//   return -1;
-//  }
+  if((*pte & PTE_U) == 0){
+   printf("allocpage: va is not valid for user use.\n");
+   return -1;
+  }
 
   pa = kalloc();
   if(pa == 0)
@@ -258,7 +258,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     sz = PGSIZE;
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0) {
+    if(!(*pte & PTE_V)) {
       *pte = 0;
       continue;
     }
@@ -562,43 +562,45 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 #ifdef LAB_PGTBL
 void
 vmprint(pagetable_t pagetable) {
+  uint64 i, j, k, top_va, mid_va, btm_va;
+  pte_t top_pte, mid_pte, btm_pte;
+
   printf("page table %p\n", (void *) pagetable);
 
-  for(int i = 0; i < 512; i++){
-    pte_t top_pte = pagetable[i];
-    if(top_pte & PTE_V){
-      pte_t va = ((pte_t) i) << 30;
-      printf(" ..%p: pte %p pa %p\n",
-             (void *) va,
-             (void *) top_pte,
-             (void *) PTE2PA(top_pte)
+  for(i = 0; i < 512; i++){
+    top_pte = pagetable[i];
+    if(!(top_pte & PTE_V))
+      continue;
+    top_va = i << 30;
+    printf(" ..%p: pte %p pa %p\n",
+           (void*) top_va,
+           (void*) top_pte,
+           (void*) PTE2PA(top_pte)
+          );
+
+    pagetable_t mid_table = (pagetable_t) PTE2PA(top_pte);
+    for(j = 0; j < 512; j++){
+      mid_pte = mid_table[j];
+      if(!(mid_pte & PTE_V))
+        continue;
+      mid_va = j << 21;
+      printf(" .. ..%p: pte %p pa %p\n",
+             (void*) (top_va + mid_va),
+             (void*) top_pte,
+             (void*) PTE2PA(top_pte)
             );
 
-      pagetable_t mid_table = (pagetable_t) PTE2PA(top_pte);
-      for(int j = 0; j < 512; j++){
-        pte_t mid_pte = mid_table[j];
-        if(mid_pte & PTE_V){
-          va += ((pte_t) j) << 21;
-          printf(" .. ..%p: pte %p pa %p\n",
-                 (void *) va,
-                 (void *) top_pte,
-                 (void *) PTE2PA(top_pte)
-                );
-
-          pagetable_t btm_table = (pagetable_t) PTE2PA(mid_pte);
-          for(int k = 0; k < 512; k++){
-            pte_t btm_pte = btm_table[k];
-            if(btm_pte & PTE_V){
-              va += ((pte_t) k) << 12;
-              printf(" .. .. ..%p: pte %p pa %p\n",
-                     (void *) va,
-                     (void *) top_pte,
-                     (void *) PTE2PA(top_pte)
-                    );
-
-            }
-          }
-        }
+      pagetable_t btm_table = (pagetable_t) PTE2PA(mid_pte);
+      for(k = 0; k < 512; k++){
+        btm_pte = btm_table[k];
+        if(!(btm_pte & PTE_V))
+          continue;
+        btm_va = k << 12;
+        printf(" .. .. ..%p: pte %p pa %p\n",
+               (void*) (top_va + mid_va + btm_va),
+               (void*) top_pte,
+               (void*) PTE2PA(top_pte)
+              );
       }
     }
   }

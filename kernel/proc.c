@@ -12,8 +12,6 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
-static struct usyscall *u;
-
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -205,6 +203,7 @@ proc_pagetable(struct proc *p)
   }
 
   // map the usyscall page just below trapframe for ugetpid().
+  struct usyscall *u;
   u = kalloc();
   if(u == 0) {
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
@@ -232,7 +231,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmunmap(pagetable, USYSCALL, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 1);
   uvmfree(pagetable, sz);
 }
 
