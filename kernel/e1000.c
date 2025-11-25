@@ -10,10 +10,12 @@
 #define TX_RING_SIZE 16
 static struct tx_desc tx_ring[TX_RING_SIZE] __attribute__((aligned(16)));
 static char *tx_bufs[TX_RING_SIZE];
+struct spinlock tx_lock;
 
 #define RX_RING_SIZE 16
 static struct rx_desc rx_ring[RX_RING_SIZE] __attribute__((aligned(16)));
 static char *rx_bufs[RX_RING_SIZE];
+struct spinlock rx_lock;
 
 // remember where the e1000's registers live.
 static volatile uint32 *regs;
@@ -44,6 +46,7 @@ e1000_init(uint32 *xregs)
     tx_ring[i].status = E1000_TXD_STAT_DD;
     tx_bufs[i] = 0;
   }
+  initlock(&tx_lock, "tx");
   regs[E1000_TDBAL] = (uint64) tx_ring;
   if(sizeof(tx_ring) % 128 != 0)
     panic("e1000");
@@ -58,6 +61,7 @@ e1000_init(uint32 *xregs)
       panic("e1000");
     rx_ring[i].addr = (uint64) rx_bufs[i];
   }
+  initlock(&rx_lock, "rx");
   regs[E1000_RDBAL] = (uint64) rx_ring;
   if(sizeof(rx_ring) % 128 != 0)
     panic("e1000");
@@ -101,8 +105,47 @@ e1000_transmit(char *buf, int len)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after send completes.
   //
+  uint32 rindex;
 
-  
+  printf("e1000_transmit\n");
+
+  printf("buf is %p\n", buf);
+  printf("len is %d\n", len);
+
+  if(buf == 0)
+    return -1;
+  if(len < 0)
+    return -1;
+
+  acquire(&tx_lock);
+
+  rindex = regs[E1000_TDT];
+
+  printf("TX ring index is %d\n", rindex);
+  printf("desc status is %d\n", tx_ring[rindex].status);
+
+  if(!(tx_ring[rindex].status & E1000_TXD_STAT_DD)){
+    release(&tx_lock);
+    return -1;
+  }
+
+  if(tx_bufs[rindex] != 0)
+    kfree(tx_bufs[rindex]);
+
+  tx_bufs[rindex] = buf;
+
+  tx_ring[rindex].addr = (uint64) buf;
+  tx_ring[rindex].length = len;
+  tx_ring[rindex].cso = 0;
+  tx_ring[rindex].cmd = E1000_TXD_CMD_RS & E1000_TXD_CMD_EOP;
+  tx_ring[rindex].status = 0;
+  tx_ring[rindex].css = 0;
+  tx_ring[rindex].special = 0;
+
+  regs[E1000_TDT] = (rindex + 1) % TX_RING_SIZE;
+
+  release(&tx_lock);
+  printf("returning from e1000_transmit\n");
   return 0;
 }
 
@@ -116,6 +159,9 @@ e1000_recv(void)
   // Create and deliver a buf for each packet (using net_rx()).
   //
 
+  printf("e1000_recv\n");
+
+  printf("returning from e1000_recv\n");
 }
 
 void
