@@ -107,11 +107,6 @@ e1000_transmit(char *buf, int len)
   //
   uint32 rindex;
 
-  printf("e1000_transmit\n");
-
-  printf("buf is %p\n", buf);
-  printf("len is %d\n", len);
-
   if(buf == 0)
     return -1;
   if(len < 0)
@@ -120,15 +115,10 @@ e1000_transmit(char *buf, int len)
   acquire(&tx_lock);
 
   rindex = regs[E1000_TDT];
-
-  printf("TX ring index is %d\n", rindex);
-  printf("desc status is %d\n", tx_ring[rindex].status);
-
   if(!(tx_ring[rindex].status & E1000_TXD_STAT_DD)){
     release(&tx_lock);
     return -1;
   }
-
   if(tx_bufs[rindex] != 0)
     kfree(tx_bufs[rindex]);
 
@@ -137,7 +127,7 @@ e1000_transmit(char *buf, int len)
   tx_ring[rindex].addr = (uint64) buf;
   tx_ring[rindex].length = len;
   tx_ring[rindex].cso = 0;
-  tx_ring[rindex].cmd = E1000_TXD_CMD_RS & E1000_TXD_CMD_EOP;
+  tx_ring[rindex].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
   tx_ring[rindex].status = 0;
   tx_ring[rindex].css = 0;
   tx_ring[rindex].special = 0;
@@ -145,7 +135,6 @@ e1000_transmit(char *buf, int len)
   regs[E1000_TDT] = (rindex + 1) % TX_RING_SIZE;
 
   release(&tx_lock);
-  printf("returning from e1000_transmit\n");
   return 0;
 }
 
@@ -158,10 +147,25 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver a buf for each packet (using net_rx()).
   //
+  uint32 rindex;
 
-  printf("e1000_recv\n");
+  acquire(&rx_lock);
 
-  printf("returning from e1000_recv\n");
+  rindex = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  while(rx_ring[rindex].status & E1000_RXD_STAT_DD){
+    net_rx((char*)rx_ring[rindex].addr, rx_ring[rindex].length);
+
+    rx_bufs[rindex] = kalloc();
+    if (!rx_bufs[rindex])
+      panic("e1000");
+    rx_ring[rindex].addr = (uint64) rx_bufs[rindex];
+    rx_ring[rindex].status = 0;
+
+    rindex = (rindex + 1) % RX_RING_SIZE;
+  }
+
+  regs[E1000_RDT] = (rindex - 1) % RX_RING_SIZE;
+  release(&rx_lock);
 }
 
 void
