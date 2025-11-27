@@ -125,3 +125,15 @@ struct dns_data {
   uint32 ttl;
   uint16 len;
 } __attribute__((packed));
+
+struct port_bnd {
+  int pid;
+  short port;
+  struct spinlock lock;
+  struct port_pack packets[16];
+}
+
+struct port_pack {
+  char *buf
+  int len;
+}

@@ -34,9 +34,10 @@ netinit(void)
 uint64
 sys_bind(void)
 {
-  //
-  // Your code here.
-  //
+  struct proc *p = myproc();
+  int port;
+
+  argint(0, &port);
 
   return -1;
 }
@@ -49,9 +50,10 @@ sys_bind(void)
 uint64
 sys_unbind(void)
 {
-  //
-  // Optional: Your code here.
-  //
+  struct proc *p = myproc();
+  int port;
+
+  argint(0, &port);
 
   return 0;
 }
@@ -74,9 +76,20 @@ sys_unbind(void)
 uint64
 sys_recv(void)
 {
-  //
-  // Your code here.
-  //
+  struct proc *p = myproc();
+  int dport;
+  uint64 src;
+  uint64 sport;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &src);
+  argaddr(2, &sport);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+
   return -1;
 }
 
