@@ -31,9 +31,11 @@ netinit(void)
   for(i = 0; i < MAX_BOUND_PORTS; i++) {
     port_bnds[i].pid = -1;
     port_bnds[i].port = -1;
-    initlock(&port_bnds[i].lock, "port");
+    port_bnds[i].packets_head = 0;
+    port_bnds[i].packets_tail = 0;
+
     for(j = 0; j < MAX_PORT_PACKS; j++) {
-      port_bnds[i].packets[j].len = -1;
+      port_bnds[i].packets[j].buf = 0;
     }
   }
 }
@@ -49,22 +51,32 @@ sys_bind(void)
 {
   struct proc *p = myproc();
   int port, i;
+  struct port_bnd *bnd;
 
   argint(0, &port);
 
+  acquire(&netlock);
+
+  bnd = 0;
   for(i = 0; i < MAX_BOUND_PORTS; i++) {
-    acquire(&port_bnds[i].lock);
     if(port_bnds[i].pid == -1) {
-      port_bnds[i].pid = p->pid;
-      port_bnds[i].port = port;
-      release(&port_bnds[i].lock);
-      return 0;
+      bnd = &port_bnds[i];
+      break;
     }
-    release(&port_bnds[i].lock);
   }
 
-  return -1;
-}
+  if(bnd == 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  bnd->pid = p->pid;
+  bnd->port = port;
+
+  release(&netlock);
+
+  return 0;
+ }
 
 //
 // unbind(int port)
@@ -76,20 +88,38 @@ sys_unbind(void)
 {
   struct proc *p = myproc();
   int port, i;
+  struct port_bnd *bnd;
 
   argint(0, &port);
 
+  acquire(&netlock);
+
+  bnd = 0;
   for(i = 0; i < MAX_BOUND_PORTS; i++) {
-    acquire(&port_bnds[i].lock);
     if(port_bnds[i].pid == p->pid &&
        port_bnds[i].port == port) {
-      port_bnds[i].pid = -1;
-      port_bnds[i].port = -1;
-      release(&port_bnds[i].lock);
-      return 0;
+      bnd = &port_bnds[i];
+      break;
     }
-    release(&port_bnds[i].lock);
   }
+
+  if(bnd == 0) {
+    release(&netlock);
+    return 0;
+  }
+
+  bnd->pid = -1;
+  bnd->port = -1;
+
+  while(bnd->packets[bnd->packets_head].buf != 0) {
+    kfree(bnd->packets[bnd->packets_head].buf);
+    bnd->packets[bnd->packets_head].buf = 0;
+    bnd->packets_head = (bnd->packets_head + 1) % MAX_PORT_PACKS;
+  }
+  bnd->packets_head = 0;
+  bnd->packets_tail = 0;
+
+  release(&netlock);
 
   return 0;
 }
@@ -112,21 +142,71 @@ sys_unbind(void)
 uint64
 sys_recv(void)
 {
+  struct port_bnd *bnd;
+  struct port_pack *packet;
+  int i;
+  char *payload;
+
   struct proc *p = myproc();
   int dport;
   uint64 src;
   uint64 sport;
   uint64 bufaddr;
-  int maxlen;
+  int len;
 
   argint(0, &dport);
   argaddr(1, &src);
   argaddr(2, &sport);
   argaddr(3, &bufaddr);
-  argint(4, &maxlen);
+  argint(4, &len);
 
+  acquire(&netlock);
 
-  return -1;
+  bnd = 0;
+  for(i = 0; i < MAX_BOUND_PORTS; i++) {
+    if(port_bnds[i].pid == p->pid &&
+       port_bnds[i].port == dport) {
+      bnd = &port_bnds[i];
+      break;
+    }
+  }
+
+  if(bnd == 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  while(bnd->packets[bnd->packets_head].buf == 0) {
+    sleep(bnd, &netlock);
+  }
+  packet = &bnd->packets[bnd->packets_head];
+
+  if(len > packet->len)
+    len = packet->len;
+
+  if(copyout(p->pagetable, src, (char*) &packet->src, sizeof(int)) < 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  if(copyout(p->pagetable, sport, (char*) &packet->sport, sizeof(short)) < 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  payload = (char*) (((uint64) packet->buf) + sizeof(struct eth) + sizeof(struct ip) + sizeof(struct udp));
+  if(copyout(p->pagetable, bufaddr, payload, len) < 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  kfree(packet->buf);
+  packet->buf = 0;
+  bnd->packets_head = (bnd->packets_head + 1) % MAX_PORT_PACKS;
+
+  release(&netlock);
+
+  return len;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -231,16 +311,58 @@ sys_send(void)
 void
 ip_rx(char *buf, int len)
 {
+  int dport;
+  int i;
+  struct port_bnd *bnd;
+
   // don't delete this printf; make grade depends on it.
   static int seen_ip = 0;
   if(seen_ip == 0)
     printf("ip_rx: received an IP packet\n");
   seen_ip = 1;
 
-  //
-  // Your code here.
-  //
-  
+  struct eth *eth = (struct eth *) buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+
+  if(ip->ip_p != IPPROTO_UDP) {
+    kfree(buf);
+    return;
+  }
+
+  struct udp *udp = (struct udp *)(ip + 1);
+
+  dport = (int) ntohs(udp->dport);
+
+  acquire(&netlock);
+
+  bnd = 0;
+  for(i = 0; i < MAX_BOUND_PORTS; i++) {
+    if(port_bnds[i].port == dport) {
+      bnd = &port_bnds[i];
+      break;
+    }
+  }
+
+  if(bnd == 0) {
+    release(&netlock);
+    kfree(buf);
+    return;
+  }
+  if(bnd->packets[bnd->packets_tail].buf != 0) {
+    release(&netlock);
+    kfree(buf);
+    return;
+  }
+
+  bnd->packets[bnd->packets_tail].buf = buf;
+  bnd->packets[bnd->packets_tail].src = (int) ntohl(ip->ip_src);
+  bnd->packets[bnd->packets_tail].sport = (int) ntohs(udp->sport);
+  bnd->packets[bnd->packets_tail].len = (int) ntohs(udp->ulen) - sizeof(struct udp);
+
+  bnd->packets_tail = (bnd->packets_tail + 1) % MAX_PORT_PACKS;
+
+  release(&netlock);
+  wakeup(bnd);
 }
 
 //

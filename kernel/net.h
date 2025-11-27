@@ -139,6 +139,7 @@ struct port_pack {
 struct port_bnd {
   int pid;
   int port;
-  struct spinlock lock;
+  short packets_head;
+  short packets_tail;
   struct port_pack packets[MAX_PORT_PACKS];
 };
