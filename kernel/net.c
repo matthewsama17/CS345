@@ -19,10 +19,23 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+struct port_bnd port_bnds[MAX_BOUND_PORTS];
+
 void
 netinit(void)
 {
+  int i, j;
+
   initlock(&netlock, "netlock");
+
+  for(i = 0; i < MAX_BOUND_PORTS; i++) {
+    port_bnds[i].pid = -1;
+    port_bnds[i].port = -1;
+    initlock(&port_bnds[i].lock, "port");
+    for(j = 0; j < MAX_PORT_PACKS; j++) {
+      port_bnds[i].packets[j].len = -1;
+    }
+  }
 }
 
 
@@ -35,9 +48,20 @@ uint64
 sys_bind(void)
 {
   struct proc *p = myproc();
-  int port;
+  int port, i;
 
   argint(0, &port);
+
+  for(i = 0; i < MAX_BOUND_PORTS; i++) {
+    acquire(&port_bnds[i].lock);
+    if(port_bnds[i].pid == -1) {
+      port_bnds[i].pid = p->pid;
+      port_bnds[i].port = port;
+      release(&port_bnds[i].lock);
+      return 0;
+    }
+    release(&port_bnds[i].lock);
+  }
 
   return -1;
 }
@@ -51,9 +75,21 @@ uint64
 sys_unbind(void)
 {
   struct proc *p = myproc();
-  int port;
+  int port, i;
 
   argint(0, &port);
+
+  for(i = 0; i < MAX_BOUND_PORTS; i++) {
+    acquire(&port_bnds[i].lock);
+    if(port_bnds[i].pid == p->pid &&
+       port_bnds[i].port == port) {
+      port_bnds[i].pid = -1;
+      port_bnds[i].port = -1;
+      release(&port_bnds[i].lock);
+      return 0;
+    }
+    release(&port_bnds[i].lock);
+  }
 
   return 0;
 }

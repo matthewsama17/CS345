@@ -126,14 +126,19 @@ struct dns_data {
   uint16 len;
 } __attribute__((packed));
 
-struct port_bnd {
-  int pid;
-  short port;
-  struct spinlock lock;
-  struct port_pack packets[16];
-}
+#define MAX_BOUND_PORTS 8
+#define MAX_PORT_PACKS 16
 
 struct port_pack {
-  char *buf
+  char *buf;
+  int src;
+  int sport;
   int len;
-}
+};
+
+struct port_bnd {
+  int pid;
+  int port;
+  struct spinlock lock;
+  struct port_pack packets[MAX_PORT_PACKS];
+};
