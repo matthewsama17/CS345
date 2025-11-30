@@ -693,3 +693,15 @@ procdump(void)
     printf("\n");
   }
 }
+
+uint64
+proc_mmap(uint64 addr, uint64 len, int prot, int flags, int fd, uint64 offset)
+{
+  return 0;
+}
+
+uint64
+proc_munmap(uint64 addr, uint64 len)
+{
+  return -1;
+}

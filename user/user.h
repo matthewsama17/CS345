@@ -37,6 +37,10 @@ int ugetpid(void);
 uint64 pgpte(void*);
 void kpgtbl(void);
 #endif
+#ifdef LAB_MMAP
+void *mmap(void*, size_t, int, int, int, off_t);
+int munmap(void*, size_t);
+#endif
 
 // ulib.c
 int stat(const char*, struct stat*);

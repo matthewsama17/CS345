@@ -79,6 +79,34 @@ sys_kill(void)
   return kill(pid);
 }
 
+uint64
+sys_mmap(void)
+{
+  uint64 addr, len, offset;
+  int prot, flags, fd;
+
+  argaddr(0, &addr);
+  argaddr(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argaddr(5, &offset);
+
+  return proc_mmap(addr, len, prot, flags, fd, offset);
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  uint64 len;
+
+  argaddr(0, &addr);
+  argaddr(1, &len);
+
+  return proc_munmap(addr, len);
+}
+
 // return how many clock tick interrupts have occurred
 // since start.
 uint64
