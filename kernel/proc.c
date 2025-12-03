@@ -930,13 +930,16 @@ proc_munmap(uint64 addr, uint64 len)
 
   if(vma->flags & MAP_SHARED) {
     uint offset = vma->offset + (addr-vma->addr);
-    for(uint64 i = 0; i < len; i += PGSIZE) {
+    uint max_len = len;
+    if(addr+max_len > (vma->addr-vma->offset)+vma->f->ip->size)
+      max_len = ((vma->addr-vma->offset)+vma->f->ip->size)-addr;
+    for(uint64 i = 0; i < max_len; i += PGSIZE) {
       pte_t *pte = walk(p->pagetable, addr+i, 0);
       if(pte && (*pte & PTE_V) && (*pte & PTE_D)) {
 
         uint n = PGSIZE;
-        if(i+n > len)
-          n = len-i;
+        if(i+n > max_len)
+          n = max_len-i;
 
         begin_op();
         ilock(vma->f->ip);
