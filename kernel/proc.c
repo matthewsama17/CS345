@@ -5,10 +5,17 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
+
+struct vma vmas[NVMA];
+struct spinlock vma_lock;
 
 struct proc *initproc;
 
@@ -49,6 +56,7 @@ procinit(void)
 {
   struct proc *p;
   
+  initlock(&vma_lock, "vma_lock");
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -56,6 +64,9 @@ procinit(void)
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
   }
+
+  for(int i = 0; i < NVMA; i++)
+    vmas[i].len = 0;
 }
 
 // Must be called with interrupts disabled,
@@ -146,6 +157,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->mapaddr = PHYSTOP;
+
   return p;
 }
 
@@ -162,6 +175,7 @@ freeproc(struct proc *p)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
+  p->mapaddr = PHYSTOP;
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -169,6 +183,8 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  for(int i = 0; i < NVMA; i++)
+    p->vmas[i] = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -350,6 +366,14 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // Unmap vmas
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i] && p->vmas[i]->len) {
+      proc_munmap(p->vmas[i]->addr, p->vmas[i]->len);
+      p->vmas[i] = 0;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -697,11 +721,211 @@ procdump(void)
 uint64
 proc_mmap(uint64 addr, uint64 len, int prot, int flags, int fd, uint64 offset)
 {
+  struct proc *p;
+  struct file *f;
+  struct vma *vma;
+  int i;
+
+  if(addr) {
+    printf("mmap addr\n");
+    return -1;
+  }
+  if(prot & PROT_EXEC) {
+    printf("mmap prot\n");
+    return -1;
+  }
+  if(flags != MAP_SHARED && flags != MAP_PRIVATE) {
+    printf("mmap flags\n");
+    return -1;
+  }
+  if(fd < 0 || fd >= NOFILE) {
+    printf("mmap fd\n");
+    return -1;
+  }
+
+  p = myproc();
+  f = p->ofile[fd];
+
+  if(!f) {
+    printf("mmap file not open\n");
+    return -1;
+  }
+  if(f->type != FD_INODE) {
+    printf("mmap file is not file\n");
+    return -1;
+  }
+
+  if((prot & PROT_READ) && !(f->readable)) {
+    printf("file cannot be read\n");
+    return -1;
+  }
+  if((prot & PROT_WRITE) && (flags == MAP_SHARED) && !(f->writable)){
+    printf("file cannot be written\n");
+    return -1;
+  }
+
+  acquire(&vma_lock);
+
+  vma = 0;
+  for(i = 0; i < NVMA; i++) {
+    if(vmas[i].len == 0) {
+      vma = &vmas[i];
+      break;
+    }
+  }
+  if(!vma) {
+    printf("mmap no vma available\n");
+    release(&vma_lock);
+    return -1;
+  }
+
+  for(i = 0; i < NVMA; i++) {
+    if(!p->vmas[i]) {
+      p->vmas[i] = vma;
+      i = -1;
+      break;
+    }
+  }
+  if(i != -1) {
+    release(&vma_lock);
+    printf("mmap process vma array full\n");
+    return -1;
+  }
+
+  vma->addr = p->mapaddr;
+  p->mapaddr = PGROUNDUP(p->mapaddr + len);
+
+  vma->len = len;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->f = f;
+  vma->offset = offset;
+
+  filedup(f);
+
+  release(&vma_lock);
+
+  return vma->addr;
+}
+
+int
+handle_mmap(struct proc *p, uint64 va, int cause)
+{
+  struct vma *vma;
+  uint64 baddr, taddr, offset;
+  char *mem;
+
+  vma = 0;
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i] && p->vmas[i]->len) {
+      if((p->vmas[i]->addr <= va) && (va < (p->vmas[i]->addr + p->vmas[i]->len))) {
+        vma = p->vmas[i];
+      }
+    }
+  }
+  if(!vma)
+    return -1;
+
+  if(!(vma->prot & PROT_READ) && cause == 13)
+    return -1;
+  if(!(vma->prot & PROT_WRITE) && cause == 15)
+    return -1;
+
+  mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_U | PTE_W | PTE_R) < 0) {
+    kfree(mem);
+    return -1;
+  }
+
+  baddr = PGROUNDDOWN(va);
+  if(baddr < vma->addr)
+    baddr = vma->addr;
+  taddr = PGROUNDUP(va + 1);
+  if(taddr > (vma->addr + vma->len))
+    taddr = (vma->addr + vma->len);
+  offset = vma->offset + (baddr - vma->addr);
+
+  memset(mem, 0, PGSIZE);
+
+  ilock(vma->f->ip);
+  readi(vma->f->ip, 1, baddr, offset, taddr-baddr);
+  iunlock(vma->f->ip);
+
+  pte_t *pte = walk(p->pagetable, PGROUNDDOWN(va), 0);
+  if(!(vma->prot & PROT_READ))
+    *pte &= ~PTE_R;
+  if(!(vma->prot & PROT_WRITE))
+    *pte &= ~PTE_W;
+
   return 0;
 }
 
 uint64
 proc_munmap(uint64 addr, uint64 len)
 {
-  return -1;
+  struct proc *p = myproc();
+  struct vma *vma;
+  char at_start, at_end;
+
+  vma = 0;
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i] && p->vmas[i]->len) {
+      if((p->vmas[i]->addr <= addr) && ((addr+len) <= (p->vmas[i]->addr + p->vmas[i]->len))) {
+        vma = p->vmas[i];
+        break;
+      }
+    }
+  }
+  if(!vma)
+    return -1;
+
+  at_start = 0;
+  at_end = 0;
+  if(addr == vma->addr)
+    at_start = 1;
+  if((addr+len) == (vma->addr+vma->len))
+    at_end = 1;
+  if(at_start == 0 && at_end == 0)
+    return -1;
+
+  if(vma->flags & MAP_SHARED) {
+    uint offset = vma->offset + (addr-vma->addr);
+    for(uint64 i = 0; i < len; i += PGSIZE) {
+      pte_t *pte = walk(p->pagetable, addr+i, 0);
+      if(pte && (*pte & PTE_V) && (*pte & PTE_D)) {
+
+        uint n = PGSIZE;
+        if(i+n > len)
+          n = len-i;
+
+        begin_op();
+        ilock(vma->f->ip);
+        writei(vma->f->ip, 1, addr+i, offset+i, n);
+        iunlock(vma->f->ip);
+        end_op();
+
+        *pte &= ~PTE_D;
+      }
+    }
+  }
+
+  for(uint64 tempaddr = addr; tempaddr < addr+len; tempaddr += PGSIZE) {
+    pte_t *pte = walk(p->pagetable, tempaddr, 0);
+    if(pte && (*pte & PTE_V))
+      uvmunmap(p->pagetable, tempaddr, 1, 1);
+  }
+
+  if(at_end) {
+    vma->offset += len;
+    vma->addr += len;
+    if(at_start) {
+      fileclose(vma->f);
+    }
+  }
+  vma->len -= len;
+
+  return 0;
 }
