@@ -338,6 +338,39 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i] && p->vmas[i]->len) {
+      struct vma *vma;
+      acquire(&vma_lock);
+
+      vma = 0;
+      for(i = 0; i < NVMA; i++) {
+        if(vmas[i].len == 0) {
+          vma = &vmas[i];
+          break;
+        }
+      }
+      if(!vma) {
+        printf("fork no vma available\n");
+        release(&vma_lock);
+        break;
+      }
+
+      np->vmas[i] = vma;
+
+      vma->addr = p->vmas[i]->addr;
+      vma->len = p->vmas[i]->len;
+      vma->prot = p->vmas[i]->prot;
+      vma->flags = p->vmas[i]->flags;
+      vma->f = p->vmas[i]->f;
+      filedup(vma->f);
+      vma->offset = p->vmas[i]->offset;
+
+      release(&vma_lock);
+    }
+  }
+  np->mapaddr = p->mapaddr;
+
   return pid;
 }
 
@@ -879,8 +912,10 @@ proc_munmap(uint64 addr, uint64 len)
       }
     }
   }
-  if(!vma)
+  if(!vma) {
+    printf("Not in a vma\n");
     return -1;
+  }
 
   at_start = 0;
   at_end = 0;
@@ -888,8 +923,10 @@ proc_munmap(uint64 addr, uint64 len)
     at_start = 1;
   if((addr+len) == (vma->addr+vma->len))
     at_end = 1;
-  if(at_start == 0 && at_end == 0)
+  if(at_start == 0 && at_end == 0) {
+    printf("munmap must unmap at the beginning or the end\n");
     return -1;
+  }
 
   if(vma->flags & MAP_SHARED) {
     uint offset = vma->offset + (addr-vma->addr);
@@ -918,10 +955,10 @@ proc_munmap(uint64 addr, uint64 len)
       uvmunmap(p->pagetable, tempaddr, 1, 1);
   }
 
-  if(at_end) {
+  if(at_start) {
     vma->offset += len;
     vma->addr += len;
-    if(at_start) {
+    if(at_end) {
       fileclose(vma->f);
     }
   }
